@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python*)",
+      "Bash(uvicorn*)",
+      "Bash(pip*)",
+      "Bash(npm*)",
+      "Bash(npx*)",
+      "Bash(pytest*)",
+      "Bash(git*)",
+      "Bash(mkdir*)",
+      "Bash(cp*)",
+      "Bash(mv*)",
+      "Bash(cat*)",
+      "Bash(ls*)",
+      "Bash(find*)",
+      "Bash(grep*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./backend/app.db)",
+      "Bash(git push *)",
+      "Bash(rm -rf *)"
+    ],
+    "defaultMode": "acceptEdits"
+  }
+}

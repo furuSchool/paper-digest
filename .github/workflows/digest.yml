@@ -1,0 +1,20 @@
+name: Run Digest
+
+on:
+  schedule:
+    # 毎時0分に実行（UTC）
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger digest endpoint
+        run: |
+          curl -X POST \
+            -H "X-API-Key: ${{ secrets.TRIGGER_API_KEY }}" \
+            "${{ secrets.BACKEND_URL }}/digest/trigger" \
+            --fail \
+            --silent \
+            --show-error
