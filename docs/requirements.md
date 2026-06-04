@@ -324,4 +324,3 @@ FRONTEND_URL=http://localhost:5173
 ## 14. 将来拡張（スコープ外）
 
 - arXiv以外のURL（meta.ai 等）ソース対応
-- ブラウザ拡張からワンクリック登録

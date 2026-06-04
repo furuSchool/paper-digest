@@ -1,7 +1,19 @@
 from unittest.mock import MagicMock, patch
 from datetime import datetime, timezone
 import pytest
-from services.arxiv_service import _build_query, fetch_papers, ArxivPaper
+from services.arxiv_service import _build_query, _normalize_arxiv_id, fetch_papers, fetch_papers_by_ids, ArxivPaper
+
+
+# --- _normalize_arxiv_id ---
+
+def test_normalize_strips_version():
+    assert _normalize_arxiv_id("2406.00001v2") == "2406.00001"
+
+def test_normalize_no_version():
+    assert _normalize_arxiv_id("2406.00001") == "2406.00001"
+
+def test_normalize_old_style():
+    assert _normalize_arxiv_id("cs/0510013v3") == "cs/0510013"
 
 
 # --- _build_query ---
@@ -37,7 +49,8 @@ def _make_arxiv_result(arxiv_id: str, title: str) -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_fetch_papers_returns_up_to_max_results():
+async def test_fetch_papers_returns_all_results():
+    """fetch_papers はサンプリングせず、取得した全論文を返す。"""
     mock_results = [_make_arxiv_result(f"2406.0000{i}", f"Paper {i}") for i in range(10)]
 
     mock_client = MagicMock()
@@ -47,11 +60,10 @@ async def test_fetch_papers_returns_up_to_max_results():
         papers = await fetch_papers(
             categories=["cs.AI"],
             period_days=7,
-            max_results=5,
             keywords=["diffusion"],
         )
 
-    assert len(papers) <= 5
+    assert len(papers) == 10
 
 
 @pytest.mark.asyncio
@@ -65,7 +77,6 @@ async def test_fetch_papers_sets_matched_by_keyword_true():
         papers = await fetch_papers(
             categories=["cs.AI"],
             period_days=7,
-            max_results=5,
             keywords=["diffusion"],
         )
 
@@ -83,8 +94,53 @@ async def test_fetch_papers_matched_by_keyword_false_when_no_keywords():
         papers = await fetch_papers(
             categories=["cs.AI"],
             period_days=7,
-            max_results=5,
             keywords=[],
         )
 
     assert all(p.matched_by_keyword is False for p in papers)
+
+
+# --- fetch_papers_by_ids ---
+
+_ATOM_RESPONSE = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/2406.00001v1</id>
+    <title>Some Paper</title>
+    <summary>Abstract text.</summary>
+    <published>2026-06-01T00:00:00Z</published>
+    <author><name>Alice</name></author>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <link rel="alternate" href="https://arxiv.org/abs/2406.00001"/>
+  </entry>
+</feed>
+"""
+
+
+@pytest.mark.asyncio
+async def test_fetch_papers_by_ids_returns_papers():
+    from unittest.mock import AsyncMock
+    import httpx
+
+    mock_resp = MagicMock()
+    mock_resp.text = _ATOM_RESPONSE
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_http = AsyncMock()
+    mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_http.__aexit__ = AsyncMock(return_value=False)
+    mock_http.get = AsyncMock(return_value=mock_resp)
+
+    with patch("services.arxiv_service.httpx.AsyncClient", return_value=mock_http):
+        papers = await fetch_papers_by_ids(["2406.00001"])
+
+    assert len(papers) == 1
+    assert papers[0].arxiv_id == "2406.00001"
+    assert papers[0].matched_by_keyword is True
+
+
+@pytest.mark.asyncio
+async def test_fetch_papers_by_ids_empty_returns_empty():
+    papers = await fetch_papers_by_ids([])
+    assert papers == []

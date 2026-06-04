@@ -8,6 +8,7 @@ export interface PaperSummary {
   url: string;
   summary_ja: string;
   matched_by_keyword: boolean;
+  citation_count: number | null;
 }
 
 export interface DigestResult {

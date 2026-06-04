@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from database import Base
 
@@ -13,11 +13,21 @@ class Source(Base):
     type: Mapped[str] = mapped_column(Text, nullable=False, default="arxiv")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     schedule_frequency: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    schedule_time: Mapped[str] = mapped_column(Text, nullable=False, default="00:00")  # UTC HH:MM
+    schedule_time: Mapped[str] = mapped_column(
+        Text, nullable=False, default="00:00"
+    )  # UTC HH:MM
     email_to: Mapped[str] = mapped_column(Text, nullable=False)
     max_results: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
     period: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     google_drive_folder_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dedup_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    citation_filter_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    citation_top_multiplier: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=5
+    )
+    llm_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -27,17 +37,43 @@ class Source(Base):
     interests: Mapped[list["SourceInterest"]] = relationship(
         "SourceInterest", back_populates="source", cascade="all, delete-orphan"
     )
+    delivered_papers: Mapped[list["DeliveredPaper"]] = relationship(
+        "DeliveredPaper", back_populates="source", cascade="all, delete-orphan"
+    )
 
 
 class SourceInterest(Base):
     __tablename__ = "source_interests"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    source_id: Mapped[int] = mapped_column(Integer, ForeignKey("sources.id"), nullable=False)
+    source_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("sources.id"), nullable=False
+    )
     arxiv_categories: Mapped[str] = mapped_column(Text, nullable=False, default="")
     keywords: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     source: Mapped["Source"] = relationship("Source", back_populates="interests")
+
+
+class DeliveredPaper(Base):
+    __tablename__ = "delivered_papers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    source_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("sources.id"), nullable=False
+    )
+    arxiv_id: Mapped[str] = mapped_column(Text, nullable=False)
+    delivered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("source_id", "arxiv_id", name="uq_delivered_papers"),
+    )
+
+    source: Mapped["Source"] = relationship("Source", back_populates="delivered_papers")
 
 
 class GoogleToken(Base):
@@ -46,7 +82,9 @@ class GoogleToken(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     access_token: Mapped[str] = mapped_column(Text, nullable=False)
     refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
-    token_expiry: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    token_expiry: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

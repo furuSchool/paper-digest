@@ -55,9 +55,7 @@ async def test_summarize_papers_returns_summaries():
     mock_client = _make_mock_client(summary_json)
 
     with patch("services.llm_service._get_client", return_value=mock_client):
-        summaries = await summarize_papers(
-            papers=SAMPLE_PAPERS,
-        )
+        summaries = await summarize_papers(papers=SAMPLE_PAPERS)
 
     assert summaries["2401.00001"] == "深層学習を用いた自然言語処理の新手法を提案。"
     assert summaries["2401.00002"] == "強化学習手法の包括的サーベイ。"
@@ -67,10 +65,24 @@ async def test_summarize_papers_fallback_on_invalid_json():
     mock_client = _make_mock_client("not valid json")
 
     with patch("services.llm_service._get_client", return_value=mock_client):
-        summaries = await summarize_papers(
-            papers=SAMPLE_PAPERS,
-        )
+        summaries = await summarize_papers(papers=SAMPLE_PAPERS)
 
-    # パース失敗時は全論文に空文字を返す
     assert summaries["2401.00001"] == ""
     assert summaries["2401.00002"] == ""
+
+
+async def test_summarize_papers_extra_prompt_included_in_call():
+    """extra_prompt が設定されている場合、プロンプトに含まれること。"""
+    summary_json = '```json\n{"2401.00001": "要約1", "2401.00002": "要約2"}\n```'
+    mock_client = _make_mock_client(summary_json)
+
+    with patch("services.llm_service._get_client", return_value=mock_client):
+        await summarize_papers(
+            papers=SAMPLE_PAPERS,
+            extra_prompt="ロボティクスの観点から要約してください",
+        )
+
+    call_args = mock_client.aio.models.generate_content.call_args
+    prompt = call_args.kwargs.get("contents") or call_args.args[0]
+    assert "ロボティクスの観点から要約してください" in prompt
+    assert "追加指示" in prompt

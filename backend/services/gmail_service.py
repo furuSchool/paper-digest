@@ -8,9 +8,16 @@ from schemas import PaperSummary
 def _build_email_body(papers: list[PaperSummary], doc_url: str) -> str:
     items = []
     for i, paper in enumerate(papers, 1):
+        citation_line = (
+            f'引用数: {paper.citation_count}<br>'
+            if paper.citation_count is not None
+            else ""
+        )
         items.append(
             f'<li style="margin-bottom:12px;">'
             f'<a href="{paper.url}" style="font-weight:bold;">[{i}] {paper.title}</a><br>'
+            f'Authors: {", ".join(paper.authors)}<br>'
+            f'{citation_line}'
             f'<span style="color:#555;">{paper.summary_ja}</span>'
             f"</li>"
         )

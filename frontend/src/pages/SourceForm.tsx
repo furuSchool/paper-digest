@@ -35,12 +35,16 @@ export default function SourceForm() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [enabled, setEnabled] = useState(true);
+  const [dedupEnabled, setDedupEnabled] = useState(true);
   const [scheduleFrequency, setScheduleFrequency] = useState("daily");
   const [scheduleTimeJst, setScheduleTimeJst] = useState("09:00");
   const [emailTo, setEmailTo] = useState("");
   const [maxResults, setMaxResults] = useState(10);
   const [period, setPeriod] = useState(7);
   const [googleDriveFolderId, setGoogleDriveFolderId] = useState("");
+  const [citationFilterEnabled, setCitationFilterEnabled] = useState(false);
+  const [citationTopMultiplier, setCitationTopMultiplier] = useState(5);
+  const [llmPrompt, setLlmPrompt] = useState("");
   const [interest, setInterest] = useState<FormInterest>(DEFAULT_INTEREST);
   const [keywordInput, setKeywordInput] = useState("");
   const [customCatInput, setCustomCatInput] = useState("");
@@ -54,12 +58,16 @@ export default function SourceForm() {
       setName(source.name);
       setDescription(source.description);
       setEnabled(source.enabled);
+      setDedupEnabled(source.dedup_enabled);
       setScheduleFrequency(source.schedule_frequency === 1 ? "daily" : "weekly");
       setScheduleTimeJst(utcHhmToJstHhm(source.schedule_time));
       setEmailTo(source.email_to);
       setMaxResults(source.max_results);
       setPeriod(source.period);
       setGoogleDriveFolderId(source.google_drive_folder_id ?? "");
+      setCitationFilterEnabled(source.citation_filter_enabled);
+      setCitationTopMultiplier(source.citation_top_multiplier);
+      setLlmPrompt(source.llm_prompt ?? "");
       if (source.interests.length > 0 && source.interests[0]) {
         const { id: _id, ...rest } = source.interests[0];
         setInterest({
@@ -83,15 +91,19 @@ export default function SourceForm() {
       name,
       description,
       enabled,
+      dedup_enabled: dedupEnabled,
       schedule_frequency: scheduleFrequency === "daily" ? 1 : 7,
       schedule_time: jstHhmToUtcHhm(scheduleTimeJst),
       email_to: emailTo,
       max_results: maxResults,
       period,
       google_drive_folder_id: googleDriveFolderId || null,
+      citation_filter_enabled: citationFilterEnabled,
+      citation_top_multiplier: citationTopMultiplier,
+      llm_prompt: llmPrompt || null,
       interests: [
         {
-          arxiv_categories: interest.arxiv_categories.join(","),
+          arxiv_categories: citationFilterEnabled ? "" : interest.arxiv_categories.join(","),
           keywords: keywordInput
             .split(",")
             .map((k) => k.trim())
@@ -163,6 +175,12 @@ export default function SourceForm() {
               {" "}有効
             </label>
           </div>
+          <div style={{ marginBottom: "8px" }}>
+            <label>
+              <input type="checkbox" checked={dedupEnabled} onChange={(e) => setDedupEnabled(e.target.checked)} />
+              {" "}重複配信防止（配信済み論文を除外）
+            </label>
+          </div>
         </fieldset>
 
         <fieldset style={{ marginBottom: "16px", padding: "12px" }}>
@@ -196,71 +214,130 @@ export default function SourceForm() {
           </div>
           <div style={{ marginBottom: "8px" }}>
             <label>対象期間（日）<br />
-              <input type="number" min={1} max={30} value={period} onChange={(e) => setPeriod(Number(e.target.value))} />
+              <input type="number" min={1} value={period} onChange={(e) => setPeriod(Number(e.target.value))} />
+            </label>
+          </div>
+          <div style={{ marginBottom: "8px" }}>
+            <label>
+              <input
+                type="checkbox"
+                checked={citationFilterEnabled}
+                onChange={(e) => setCitationFilterEnabled(e.target.checked)}
+              />
+              {" "}引用数フィルタリング（Semantic Scholar で引用数上位を優先）
+            </label>
+          </div>
+          {citationFilterEnabled && (
+            <div style={{ marginBottom: "8px", marginLeft: "20px", padding: "8px", background: "#f9f9f9", borderRadius: "4px" }}>
+              <label>候補倍率（上位 最大取得件数 ×<br />
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={citationTopMultiplier}
+                  onChange={(e) => setCitationTopMultiplier(Number(e.target.value))}
+                  style={{ width: "60px" }}
+                />
+                {" "}件を候補にしてランダム選択）
+              </label>
+              <p style={{ margin: "6px 0 0", fontSize: "12px", color: "#888" }}>
+                ※ 引用数フィルタ有効時は arXiv カテゴリを使用せず、キーワードのみで検索します
+              </p>
+            </div>
+          )}
+          <div style={{ marginBottom: "8px" }}>
+            <label>LLM要約の追加指示（任意）<br />
+              <textarea
+                value={llmPrompt}
+                onChange={(e) => setLlmPrompt(e.target.value)}
+                placeholder="例: ロボティクスの実応用に関する視点を重視して要約してください"
+                style={{ width: "100%", minHeight: "60px" }}
+              />
             </label>
           </div>
         </fieldset>
 
-        <fieldset style={{ marginBottom: "16px", padding: "12px" }}>
-          <legend>興味設定</legend>
-          <div style={{ marginBottom: "8px" }}>
-            <label>arXivカテゴリ</label>
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "6px" }}>
-              {ARXIV_CATEGORY_PRESETS.map(({ id: cat, desc }) => (
-                <label key={cat} style={{ fontSize: "14px" }}>
-                  <input
-                    type="checkbox"
-                    checked={interest.arxiv_categories.includes(cat)}
-                    onChange={() => toggleCategory(cat)}
-                  />
-                  {" "}{cat}<span style={{ color: "#888", fontSize: "12px" }}> ({desc})</span>
-                </label>
-              ))}
-            </div>
-            <div style={{ marginTop: "10px", fontSize: "12px", color: "#888", marginBottom: "4px" }}>カスタム追加</div>
-            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-              <input
-                value={customCatInput}
-                onChange={(e) => setCustomCatInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCustomCategory())}
-                placeholder="例: cs.AI"
-                style={{ width: "140px" }}
-              />
-              <button type="button" onClick={addCustomCategory}>追加</button>
-            </div>
-            {interest.arxiv_categories.filter(
-              (cat) => !ARXIV_CATEGORY_PRESETS.map((c) => c.id).includes(cat)
-            ).length > 0 && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "6px" }}>
-                {interest.arxiv_categories
-                  .filter((cat) => !ARXIV_CATEGORY_PRESETS.map((c) => c.id).includes(cat))
-                  .map((cat) => (
-                    <span
-                      key={cat}
-                      style={{ background: "#eee", borderRadius: "4px", padding: "2px 8px", fontSize: "13px" }}
-                    >
-                      {cat}
-                      <button
-                        type="button"
-                        onClick={() => toggleCategory(cat)}
-                        style={{ marginLeft: "4px", background: "none", border: "none", cursor: "pointer", color: "#888" }}
-                      >×</button>
-                    </span>
-                  ))}
+        {!citationFilterEnabled && (
+          <fieldset style={{ marginBottom: "16px", padding: "12px" }}>
+            <legend>興味設定</legend>
+            <div style={{ marginBottom: "8px" }}>
+              <label>arXivカテゴリ</label>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "6px" }}>
+                {ARXIV_CATEGORY_PRESETS.map(({ id: cat, desc }) => (
+                  <label key={cat} style={{ fontSize: "14px" }}>
+                    <input
+                      type="checkbox"
+                      checked={interest.arxiv_categories.includes(cat)}
+                      onChange={() => toggleCategory(cat)}
+                    />
+                    {" "}{cat}<span style={{ color: "#888", fontSize: "12px" }}> ({desc})</span>
+                  </label>
+                ))}
               </div>
-            )}
-          </div>
-          <div style={{ marginBottom: "8px" }}>
-            <label>キーワード（カンマ区切り）<br />
-              <input
-                value={keywordInput}
-                onChange={(e) => setKeywordInput(e.target.value)}
-                placeholder="例: diffusion,transformer"
-                style={{ width: "100%" }}
-              />
-            </label>
-          </div>
-        </fieldset>
+              <div style={{ marginTop: "10px", fontSize: "12px", color: "#888", marginBottom: "4px" }}>カスタム追加</div>
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                <input
+                  value={customCatInput}
+                  onChange={(e) => setCustomCatInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCustomCategory())}
+                  placeholder="例: cs.AI"
+                  style={{ width: "140px" }}
+                />
+                <button type="button" onClick={addCustomCategory}>追加</button>
+              </div>
+              {interest.arxiv_categories.filter(
+                (cat) => !ARXIV_CATEGORY_PRESETS.map((c) => c.id).includes(cat)
+              ).length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "6px" }}>
+                  {interest.arxiv_categories
+                    .filter((cat) => !ARXIV_CATEGORY_PRESETS.map((c) => c.id).includes(cat))
+                    .map((cat) => (
+                      <span
+                        key={cat}
+                        style={{ background: "#eee", borderRadius: "4px", padding: "2px 8px", fontSize: "13px" }}
+                      >
+                        {cat}
+                        <button
+                          type="button"
+                          onClick={() => toggleCategory(cat)}
+                          style={{ marginLeft: "4px", background: "none", border: "none", cursor: "pointer", color: "#888" }}
+                        >×</button>
+                      </span>
+                    ))}
+                </div>
+              )}
+            </div>
+            <div style={{ marginBottom: "8px" }}>
+              <label>キーワード（カンマ区切り）<br />
+                <input
+                  value={keywordInput}
+                  onChange={(e) => setKeywordInput(e.target.value)}
+                  placeholder="例: diffusion,transformer"
+                  style={{ width: "100%" }}
+                />
+              </label>
+            </div>
+          </fieldset>
+        )}
+
+        {citationFilterEnabled && (
+          <fieldset style={{ marginBottom: "16px", padding: "12px" }}>
+            <legend>興味設定（引用数フィルタ用）</legend>
+            <div style={{ marginBottom: "8px" }}>
+              <label>キーワード（カンマ区切り）<br />
+                <input
+                  value={keywordInput}
+                  onChange={(e) => setKeywordInput(e.target.value)}
+                  placeholder="例: diffusion,transformer"
+                  style={{ width: "100%" }}
+                />
+              </label>
+              <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#888" }}>
+                Semantic Scholar をこのキーワードで検索します（arXiv カテゴリは使用しません）
+              </p>
+            </div>
+          </fieldset>
+        )}
 
         <fieldset style={{ marginBottom: "16px", padding: "12px" }}>
           <legend>通知設定</legend>

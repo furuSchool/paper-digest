@@ -4,6 +4,7 @@ from pydantic import BaseModel, EmailStr
 
 # --- SourceInterest ---
 
+
 class SourceInterestBase(BaseModel):
     arxiv_categories: str = ""
     keywords: str = ""
@@ -22,6 +23,7 @@ class SourceInterestRead(SourceInterestBase):
 
 # --- Source ---
 
+
 class SourceBase(BaseModel):
     name: str
     description: str = ""
@@ -33,6 +35,10 @@ class SourceBase(BaseModel):
     max_results: int = 20
     period: int = 1
     google_drive_folder_id: str | None = None
+    dedup_enabled: bool = True
+    citation_filter_enabled: bool = False
+    citation_top_multiplier: int = 5
+    llm_prompt: str | None = None
 
 
 class SourceCreate(SourceBase):
@@ -53,12 +59,14 @@ class SourceRead(SourceBase):
 
 # --- GoogleToken ---
 
+
 class GoogleTokenStatus(BaseModel):
     authenticated: bool
     token_expiry: datetime | None = None
 
 
 # --- Digest ---
+
 
 class PaperSummary(BaseModel):
     arxiv_id: str
@@ -68,6 +76,7 @@ class PaperSummary(BaseModel):
     url: str
     summary_ja: str
     matched_by_keyword: bool = False
+    citation_count: int | None = None  # 引用数フィルタ使用時のみ設定
 
 
 class DigestResult(BaseModel):

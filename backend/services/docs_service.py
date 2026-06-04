@@ -52,8 +52,10 @@ def _build_doc_body(papers: list[PaperSummary]) -> tuple[list[dict], list[dict]]
                 }
             }
         )
-        insert(f"Authors: {', '.join(paper.authors)}\n\n")
-        insert(f"{paper.summary_ja}\n")
+        insert(f"Authors: {', '.join(paper.authors)}\n")
+        if paper.citation_count is not None:
+            insert(f"引用数: {paper.citation_count}\n")
+        insert(f"\n{paper.summary_ja}\n")
 
     return insert_requests, link_requests
 

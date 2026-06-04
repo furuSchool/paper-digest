@@ -1,14 +1,22 @@
 import logging
 import os
+import random
 import time
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from database import get_db
-from models import Source, SourceInterest
+from models import DeliveredPaper, Source, SourceInterest
 from schemas import DigestResult, PaperSummary
-from services import arxiv_service, llm_service, docs_service, gmail_service, auth_service
+from services import (
+    arxiv_service,
+    llm_service,
+    docs_service,
+    gmail_service,
+    auth_service,
+)
+from services import semantic_scholar_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/digest", tags=["digest"])
@@ -44,7 +52,9 @@ _MOCK_PAPERS: list[PaperSummary] = [
 ]
 
 
-async def _run_digest(source_id: int, db: AsyncSession, send: bool, use_mock: bool = False) -> DigestResult:
+async def _run_digest(
+    source_id: int, db: AsyncSession, send: bool, use_mock: bool = False
+) -> DigestResult:
     """ダイジェスト生成パイプラインの共通処理。"""
     result = await db.execute(select(Source).where(Source.id == source_id))
     source = result.scalars().first()
@@ -56,15 +66,23 @@ async def _run_digest(source_id: int, db: AsyncSession, send: bool, use_mock: bo
     )
     interest = interest_result.scalars().first()
 
-    categories = [c.strip() for c in (interest.arxiv_categories if interest else "").split(",") if c.strip()]
-    keywords = [k.strip() for k in (interest.keywords if interest else "").split(",") if k.strip()]
+    categories = [
+        c.strip()
+        for c in (interest.arxiv_categories if interest else "").split(",")
+        if c.strip()
+    ]
+    keywords = [
+        k.strip()
+        for k in (interest.keywords if interest else "").split(",")
+        if k.strip()
+    ]
 
-    if not categories:
-        raise HTTPException(status_code=400, detail="No arXiv categories configured for this source")
-
-    # モックモード: arXiv fetch と LLM をスキップして固定データを使用
+    # モックモード
     if use_mock:
-        logger.info("[MOCK] arXiv fetch・LLM をスキップし、モックデータ %d件を使用", len(_MOCK_PAPERS))
+        logger.info(
+            "[MOCK] arXiv fetch・LLM をスキップし、モックデータ %d件を使用",
+            len(_MOCK_PAPERS),
+        )
         paper_summaries = _MOCK_PAPERS
         doc_url: str | None = None
 
@@ -79,7 +97,6 @@ async def _run_digest(source_id: int, db: AsyncSession, send: bool, use_mock: bo
                 papers=paper_summaries,
                 folder_id=source.google_drive_folder_id,
             )
-
             await gmail_service.send_digest_email(
                 creds=creds,
                 to=source.email_to,
@@ -88,28 +105,112 @@ async def _run_digest(source_id: int, db: AsyncSession, send: bool, use_mock: bo
                 doc_url=doc_url,
             )
 
-        return DigestResult(source_id=source_id, papers=paper_summaries, doc_url=doc_url)
+        return DigestResult(
+            source_id=source_id, papers=paper_summaries, doc_url=doc_url
+        )
 
-    # ① arXiv 論文取得（日付サンプリング＋APIキーワードフィルタ込み）
-    logger.info("[1/2] arXiv fetch 開始 (categories=%s, period=%d日, max_results=%d)",
-                categories, source.period, source.max_results)
-    t0 = time.perf_counter()
-    selected = await arxiv_service.fetch_papers(
-        categories=categories,
-        period_days=source.period,
-        max_results=source.max_results,
-        keywords=keywords,
-    )
-    logger.info("[1/2] arXiv fetch 完了: %.1f秒 → %d件",
-                time.perf_counter() - t0, len(selected))
+    if not categories and not source.citation_filter_enabled:
+        raise HTTPException(
+            status_code=400, detail="No arXiv categories configured for this source"
+        )
+
+    delivered_ids: set[str] = set()
+    if source.dedup_enabled:
+        delivered_result = await db.execute(
+            select(DeliveredPaper.arxiv_id).where(DeliveredPaper.source_id == source_id)
+        )
+        delivered_ids = set(delivered_result.scalars().all())
+        logger.info("配信済みID数: %d件", len(delivered_ids))
+
+    selected: list[arxiv_service.ArxivPaper] = []
+    citation_counts: dict[str, int] = {}
+    use_citation_path = source.citation_filter_enabled and bool(keywords)
+
+    if use_citation_path:
+        pool_size = source.max_results * source.citation_top_multiplier
+        logger.info(
+            "[1/2] Semantic Scholar 検索開始 (keywords=%s, pool=%d)",
+            keywords,
+            pool_size,
+        )
+        t0 = time.perf_counter()
+        try:
+            citation_pairs = await semantic_scholar_service.search_by_citation(
+                keywords=keywords,
+                limit=pool_size,
+                period_days=source.period,
+            )
+            logger.info(
+                "[1/2] Semantic Scholar 完了: %.1f秒 → %d件",
+                time.perf_counter() - t0,
+                len(citation_pairs),
+            )
+
+            # dedup
+            if source.dedup_enabled and delivered_ids:
+                citation_pairs = [
+                    (aid, cnt)
+                    for aid, cnt in citation_pairs
+                    if aid not in delivered_ids
+                ]
+
+            # sample
+            if len(citation_pairs) > source.max_results:
+                citation_pairs = random.sample(citation_pairs, source.max_results)
+
+            citation_counts = {aid: cnt for aid, cnt in citation_pairs}
+            arxiv_ids = [aid for aid, _ in citation_pairs]
+
+            if arxiv_ids:
+                logger.info("[1.5/2] arXiv fetch by IDs (%d件)", len(arxiv_ids))
+                selected = await arxiv_service.fetch_papers_by_ids(arxiv_ids)
+            else:
+                selected = []
+
+        except Exception as e:
+            raise HTTPException(status_code=400, detail="Citation filter error")
+
+    if not use_citation_path:
+        if not categories:
+            raise HTTPException(
+                status_code=400, detail="No arXiv categories configured for this source"
+            )
+        logger.info(
+            "[1/2] arXiv fetch 開始 (categories=%s, period=%d日)",
+            categories,
+            source.period,
+        )
+        t0 = time.perf_counter()
+        all_papers = await arxiv_service.fetch_papers(
+            categories=categories,
+            period_days=source.period,
+            keywords=keywords,
+        )
+        logger.info(
+            "[1/2] arXiv fetch 完了: %.1f秒 → %d件",
+            time.perf_counter() - t0,
+            len(all_papers),
+        )
+
+        # dedup
+        if source.dedup_enabled and delivered_ids:
+            all_papers = [p for p in all_papers if p.arxiv_id not in delivered_ids]
+
+        # sample
+        if len(all_papers) <= source.max_results:
+            selected = all_papers
+        else:
+            selected = random.sample(all_papers, source.max_results)
 
     if not selected:
         return DigestResult(source_id=source_id, papers=[], doc_url=None)
 
-    # ② LLM: 日本語要約
     logger.info("[2/2] LLM 要約開始 (%d件)", len(selected))
     t2 = time.perf_counter()
-    summaries = await llm_service.summarize_papers(papers=selected)
+    summaries = await llm_service.summarize_papers(
+        papers=selected,
+        extra_prompt=source.llm_prompt or None,
+    )
     logger.info("[2/2] LLM 要約完了: %.1f秒", time.perf_counter() - t2)
 
     paper_summaries = [
@@ -121,26 +222,24 @@ async def _run_digest(source_id: int, db: AsyncSession, send: bool, use_mock: bo
             url=p.url,
             summary_ja=summaries.get(p.arxiv_id, ""),
             matched_by_keyword=p.matched_by_keyword,
+            citation_count=citation_counts.get(p.arxiv_id),
         )
         for p in selected
     ]
 
-    doc_url: str | None = None
+    doc_url = None
 
     if send:
         creds = await auth_service.get_credentials(db)
         if not creds:
             raise HTTPException(status_code=401, detail="Google not authenticated")
 
-        # ⑤ Google Docs 書き込み
         doc_url = await docs_service.create_doc(
             creds=creds,
             description=source.description,
             papers=paper_summaries,
             folder_id=source.google_drive_folder_id,
         )
-
-        # ⑥ Gmail 送信
         await gmail_service.send_digest_email(
             creds=creds,
             to=source.email_to,
@@ -149,6 +248,18 @@ async def _run_digest(source_id: int, db: AsyncSession, send: bool, use_mock: bo
             doc_url=doc_url,
         )
 
+        if source.dedup_enabled:
+            now = datetime.now(timezone.utc)
+            for ps in paper_summaries:
+                await db.execute(
+                    text(
+                        "INSERT OR IGNORE INTO delivered_papers "
+                        "(source_id, arxiv_id, delivered_at) VALUES (:sid, :aid, :dt)"
+                    ),
+                    {"sid": source_id, "aid": ps.arxiv_id, "dt": now},
+                )
+            await db.commit()
+
     return DigestResult(source_id=source_id, papers=paper_summaries, doc_url=doc_url)
 
 
@@ -156,7 +267,10 @@ async def _run_digest(source_id: int, db: AsyncSession, send: bool, use_mock: bo
 async def preview_digest(
     source_id: int,
     db: AsyncSession = Depends(get_db),
-    use_mock: bool = Query(default=False, description="Gemini APIコールをスキップしてモックデータを使用する"),
+    use_mock: bool = Query(
+        default=False,
+        description="Gemini APIコールをスキップしてモックデータを使用する",
+    ),
 ) -> DigestResult:
     """プレビュー用（Docs書き込み・メール送信なし）。use_mock=true でLLMをバイパス。"""
     return await _run_digest(source_id, db, send=False, use_mock=use_mock)
@@ -166,7 +280,10 @@ async def preview_digest(
 async def run_digest(
     source_id: int,
     db: AsyncSession = Depends(get_db),
-    use_mock: bool = Query(default=False, description="Gemini APIコールをスキップしてモックデータを使用する"),
+    use_mock: bool = Query(
+        default=False,
+        description="Gemini APIコールをスキップしてモックデータを使用する",
+    ),
 ) -> DigestResult:
     """フル実行（Docs書き込み・メール送信あり）。use_mock=true でLLMをバイパス。"""
     return await _run_digest(source_id, db, send=True, use_mock=use_mock)
@@ -189,7 +306,9 @@ async def trigger_digest(
     current_time = now_utc.strftime("%H:%M")
 
     result = await db.execute(
-        select(Source).where(Source.enabled == True, Source.schedule_time == current_time)  # noqa: E712
+        select(Source).where(
+            Source.enabled == True, Source.schedule_time == current_time
+        )  # noqa: E712
     )
     sources = result.scalars().all()
 

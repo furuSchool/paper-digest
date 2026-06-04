@@ -17,6 +17,10 @@ export interface Source {
   max_results: number;
   period: number;
   google_drive_folder_id: string | null;
+  dedup_enabled: boolean;
+  citation_filter_enabled: boolean;
+  citation_top_multiplier: number;
+  llm_prompt: string | null;
   created_at: string;
   interests: SourceInterest[];
 }

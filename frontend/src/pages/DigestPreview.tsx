@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { digestApi, type DigestResult } from "../api/digest";
 
 export default function DigestPreview() {
@@ -95,7 +95,10 @@ export default function DigestPreview() {
                 </a>
               </h3>
               <p style={{ margin: "0 0 4px", color: "#666", fontSize: "14px" }}>
-                {paper.authors.join(", ")} | {paper.matched_by_keyword ? "キーワード" : "ランダム選択"}
+                {paper.authors.join(", ")}
+                {paper.citation_count !== null && paper.citation_count !== undefined
+                  ? ` | 引用数: ${paper.citation_count}`
+                  : ""}
               </p>
               <p style={{ margin: "0 0 8px", fontSize: "14px" }}>{paper.abstract}</p>
               {paper.summary_ja && (
