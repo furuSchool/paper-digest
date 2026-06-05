@@ -1,8 +1,9 @@
+import asyncio
 import logging
 import os
 import random
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -296,7 +297,8 @@ async def trigger_digest(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
-    GitHub Actionsから呼ばれる。現在時刻（UTC HH:MM）と一致する有効ソースを全実行。
+    GitHub Actionsから毎日 22:00 UTC (= 07:00 JST) に呼ばれる。
+    有効かつ schedule_frequency 日以上未実行のソースを全実行。
     TRIGGER_API_KEY で保護。
     """
     expected_key = os.getenv("TRIGGER_API_KEY", "")
@@ -305,26 +307,31 @@ async def trigger_digest(
 
     now_utc = datetime.now(timezone.utc)
 
-    from datetime import timedelta
-
-    window_times = {
-        (now_utc + timedelta(minutes=delta)).strftime("%H:%M") for delta in range(-5, 6)
-    }
-
     result = await db.execute(
-        select(Source).where(
-            Source.enabled == True,
-            Source.schedule_time.in_(window_times),  # noqa: E712
-        )
+        select(Source).where(Source.enabled == True)  # noqa: E712
     )
     sources = result.scalars().all()
 
     executed: list[int] = []
+    skipped: list[int] = []
     errors: list[dict] = []
 
+    first_execution = True
     for source in sources:
+        if source.last_triggered_at is not None:
+            threshold = timedelta(days=source.schedule_frequency) - timedelta(hours=1)
+            if (now_utc - source.last_triggered_at) < threshold:
+                skipped.append(source.id)
+                continue
+
+        if not first_execution:
+            await asyncio.sleep(5)
+        first_execution = False
+
         try:
             await _run_digest(source.id, db, send=True)
+            source.last_triggered_at = now_utc
+            await db.commit()
             executed.append(source.id)
         except Exception as e:
             errors.append({"source_id": source.id, "error": str(e)})
@@ -332,5 +339,6 @@ async def trigger_digest(
     return {
         "triggered_at": now_utc.isoformat(),
         "executed": executed,
+        "skipped": skipped,
         "errors": errors,
     }

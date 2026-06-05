@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { sourcesApi, type Source } from "../api/sources";
-import { utcHhmToJstHhm } from "../utils/timezone";
+import { utcToJst } from "../utils/timezone";
 
 export default function Dashboard() {
   const [sources, setSources] = useState<Source[]>([]);
@@ -20,8 +20,11 @@ export default function Dashboard() {
 
   const handleToggle = async (source: Source) => {
     try {
+      const { id: _id, created_at: _ca, last_triggered_at: _lt, ...rest } = source;
       const updated = await sourcesApi.update(source.id, {
+        ...rest,
         enabled: !source.enabled,
+        interests: source.interests.map(({ id: _iid, ...i }) => i),
       });
       setSources((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
     } catch (e: unknown) {
@@ -30,7 +33,7 @@ export default function Dashboard() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm("このソースを削除しますか？")) return;
+    if (!confirm("この配信を削除しますか？")) return;
     try {
       await sourcesApi.remove(id);
       setSources((prev) => prev.filter((s) => s.id !== id));
@@ -47,18 +50,18 @@ export default function Dashboard() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h1>ダッシュボード</h1>
         <Link to="/sources/new">
-          <button>+ 新規ソース</button>
+          <button>+ 新規配信設定</button>
         </Link>
       </div>
 
       {sources.length === 0 ? (
-        <p>ソースが登録されていません。新規ソースを追加してください。</p>
+        <p>配信設定が登録されていません。新規配信を追加してください。</p>
       ) : (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
               <th style={{ textAlign: "left", padding: "8px", borderBottom: "1px solid #ccc" }}>名前</th>
-              <th style={{ textAlign: "left", padding: "8px", borderBottom: "1px solid #ccc" }}>スケジュール (JST)</th>
+              <th style={{ textAlign: "left", padding: "8px", borderBottom: "1px solid #ccc" }}>スケジュール</th>
               <th style={{ textAlign: "left", padding: "8px", borderBottom: "1px solid #ccc" }}>有効</th>
               <th style={{ textAlign: "left", padding: "8px", borderBottom: "1px solid #ccc" }}>操作</th>
             </tr>
@@ -72,7 +75,10 @@ export default function Dashboard() {
                   <small style={{ color: "#666" }}>{s.description}</small>
                 </td>
                 <td style={{ padding: "8px", borderBottom: "1px solid #eee" }}>
-                  {s.schedule_frequency} {utcHhmToJstHhm(s.schedule_time)}
+                  {s.schedule_frequency === 1 ? "毎日" : `${s.schedule_frequency}日ごと`} 07:00 JST
+                  {s.last_triggered_at && (
+                    <><br /><small style={{ color: "#888" }}>最終配信: {utcToJst(s.last_triggered_at)}</small></>
+                  )}
                 </td>
                 <td style={{ padding: "8px", borderBottom: "1px solid #eee" }}>
                   <input

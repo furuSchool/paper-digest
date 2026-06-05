@@ -74,6 +74,7 @@ async def run_migrations() -> None:
         "ALTER TABLE sources ADD COLUMN citation_filter_enabled BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE sources ADD COLUMN citation_top_multiplier INTEGER NOT NULL DEFAULT 5",
         "ALTER TABLE sources ADD COLUMN llm_prompt TEXT",
+        "ALTER TABLE sources ADD COLUMN last_triggered_at DATETIME",
     ]
     async with engine.begin() as conn:
         for sql in migrations:

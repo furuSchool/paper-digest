@@ -30,7 +30,6 @@ class SourceBase(BaseModel):
     type: str = "arxiv"
     enabled: bool = True
     schedule_frequency: int = 1
-    schedule_time: str = "00:00"  # UTC HH:MM
     email_to: EmailStr
     max_results: int = 20
     period: int = 1
@@ -52,6 +51,7 @@ class SourceUpdate(SourceBase):
 class SourceRead(SourceBase):
     id: int
     created_at: datetime
+    last_triggered_at: datetime | None = None
     interests: list[SourceInterestRead] = []
 
     model_config = {"from_attributes": True}

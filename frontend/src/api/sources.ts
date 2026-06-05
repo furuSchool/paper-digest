@@ -12,7 +12,7 @@ export interface Source {
   description: string;
   enabled: boolean;
   schedule_frequency: number;
-  schedule_time: string;
+  last_triggered_at: string | null;
   email_to: string;
   max_results: number;
   period: number;

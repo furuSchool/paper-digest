@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { sourcesApi, type SourceCreate } from "../api/sources";
-import { jstHhmToUtcHhm, utcHhmToJstHhm } from "../utils/timezone";
 
 const ARXIV_CATEGORY_PRESETS: { id: string; desc: string }[] = [
   { id: "cs.AI",   desc: "Artificial Intelligence" },
@@ -36,14 +35,13 @@ export default function SourceForm() {
   const [description, setDescription] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [dedupEnabled, setDedupEnabled] = useState(true);
-  const [scheduleFrequency, setScheduleFrequency] = useState("daily");
-  const [scheduleTimeJst, setScheduleTimeJst] = useState("09:00");
+  const [scheduleFrequency, setScheduleFrequency] = useState(1);
   const [emailTo, setEmailTo] = useState("");
-  const [maxResults, setMaxResults] = useState(10);
-  const [period, setPeriod] = useState(7);
+  const [maxResults, setMaxResults] = useState(5);
+  const [period, setPeriod] = useState(60);
   const [googleDriveFolderId, setGoogleDriveFolderId] = useState("");
   const [citationFilterEnabled, setCitationFilterEnabled] = useState(false);
-  const [citationTopMultiplier, setCitationTopMultiplier] = useState(5);
+  const [citationTopMultiplier, setCitationTopMultiplier] = useState(10);
   const [llmPrompt, setLlmPrompt] = useState("");
   const [interest, setInterest] = useState<FormInterest>(DEFAULT_INTEREST);
   const [keywordInput, setKeywordInput] = useState("");
@@ -59,8 +57,7 @@ export default function SourceForm() {
       setDescription(source.description);
       setEnabled(source.enabled);
       setDedupEnabled(source.dedup_enabled);
-      setScheduleFrequency(source.schedule_frequency === 1 ? "daily" : "weekly");
-      setScheduleTimeJst(utcHhmToJstHhm(source.schedule_time));
+      setScheduleFrequency(source.schedule_frequency);
       setEmailTo(source.email_to);
       setMaxResults(source.max_results);
       setPeriod(source.period);
@@ -92,8 +89,7 @@ export default function SourceForm() {
       description,
       enabled,
       dedup_enabled: dedupEnabled,
-      schedule_frequency: scheduleFrequency === "daily" ? 1 : 7,
-      schedule_time: jstHhmToUtcHhm(scheduleTimeJst),
+      schedule_frequency: scheduleFrequency,
       email_to: emailTo,
       max_results: maxResults,
       period,
@@ -155,12 +151,12 @@ export default function SourceForm() {
 
   return (
     <div style={{ maxWidth: "600px" }}>
-      <h1>{isEdit ? "ソース編集" : "新規ソース"}</h1>
+      <h1>{isEdit ? "配信設定の編集" : "新規配信設定"}</h1>
       <form onSubmit={handleSubmit}>
         <fieldset style={{ marginBottom: "16px", padding: "12px" }}>
           <legend>基本設定</legend>
           <div style={{ marginBottom: "8px" }}>
-            <label>名前<br />
+            <label>配信タイトル<br />
               <input value={name} onChange={(e) => setName(e.target.value)} required style={{ width: "100%" }} />
             </label>
           </div>
@@ -178,7 +174,7 @@ export default function SourceForm() {
           <div style={{ marginBottom: "8px" }}>
             <label>
               <input type="checkbox" checked={dedupEnabled} onChange={(e) => setDedupEnabled(e.target.checked)} />
-              {" "}重複配信防止（配信済み論文を除外）
+              {" "}一度配信した論文を除外する
             </label>
           </div>
         </fieldset>
@@ -187,33 +183,31 @@ export default function SourceForm() {
           <legend>スケジュール</legend>
           <div style={{ marginBottom: "8px" }}>
             <label>頻度<br />
-              <select value={scheduleFrequency} onChange={(e) => setScheduleFrequency(e.target.value)}>
-                <option value="daily">毎日</option>
-                <option value="weekly">毎週</option>
+              <select value={scheduleFrequency} onChange={(e) => setScheduleFrequency(Number(e.target.value))}>
+                <option value={1}>毎日</option>
+                <option value={2}>2日ごと</option>
+                <option value={3}>3日ごと</option>
+                <option value={5}>5日ごと</option>
+                <option value={7}>週1回</option>
+                <option value={14}>隔週</option>
+                <option value={30}>月1回</option>
               </select>
             </label>
           </div>
-          <div style={{ marginBottom: "8px" }}>
-            <label>実行時刻 (JST)<br />
-              <input
-                type="time"
-                value={scheduleTimeJst}
-                onChange={(e) => setScheduleTimeJst(e.target.value)}
-                required
-              />
-            </label>
-          </div>
+          <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#888" }}>
+            配信時刻は毎朝7時固定です
+          </p>
         </fieldset>
 
         <fieldset style={{ marginBottom: "16px", padding: "12px" }}>
-          <legend>収集設定</legend>
+          <legend>詳細設定</legend>
           <div style={{ marginBottom: "8px" }}>
-            <label>最大取得件数<br />
+            <label>配信件数<br />
               <input type="number" min={1} max={50} value={maxResults} onChange={(e) => setMaxResults(Number(e.target.value))} />
             </label>
           </div>
           <div style={{ marginBottom: "8px" }}>
-            <label>対象期間（日）<br />
+            <label>検索対象期間（日）<br />
               <input type="number" min={1} value={period} onChange={(e) => setPeriod(Number(e.target.value))} />
             </label>
           </div>
@@ -224,29 +218,26 @@ export default function SourceForm() {
                 checked={citationFilterEnabled}
                 onChange={(e) => setCitationFilterEnabled(e.target.checked)}
               />
-              {" "}引用数フィルタリング（Semantic Scholar で引用数上位を優先）
+              {" "}引用数上位を優先する
             </label>
           </div>
           {citationFilterEnabled && (
             <div style={{ marginBottom: "8px", marginLeft: "20px", padding: "8px", background: "#f9f9f9", borderRadius: "4px" }}>
-              <label>候補倍率（上位 最大取得件数 ×<br />
+              <label>配信件数 ×{" "}
                 <input
                   type="number"
                   min={1}
                   max={20}
                   value={citationTopMultiplier}
                   onChange={(e) => setCitationTopMultiplier(Number(e.target.value))}
-                  style={{ width: "60px" }}
+                  style={{ width: "30px" }}
                 />
-                {" "}件を候補にしてランダム選択）
+                {" "}件の中からランダムに配信する論文を選ぶ
               </label>
-              <p style={{ margin: "6px 0 0", fontSize: "12px", color: "#888" }}>
-                ※ 引用数フィルタ有効時は arXiv カテゴリを使用せず、キーワードのみで検索します
-              </p>
             </div>
           )}
           <div style={{ marginBottom: "8px" }}>
-            <label>LLM要約の追加指示（任意）<br />
+            <label>要約の追加指示（任意）<br />
               <textarea
                 value={llmPrompt}
                 onChange={(e) => setLlmPrompt(e.target.value)}

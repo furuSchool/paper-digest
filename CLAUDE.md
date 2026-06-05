@@ -115,7 +115,9 @@ FRONTEND_URL=http://localhost:5173
 - Google OAuth2は初回セットアップ時に手動でブラウザ認証が必要。`/auth/google` エンドポイントで実施
 - arXiv APIはレートリミットあり。1リクエスト/3秒を守ること
 - Gemini APIコールは1ダイジェスト生成につき最大2回（スコアリング1回 + 要約1回）に抑える
-- タイムゾーン変換ミスが起きやすい。schedule_time はDB保存・処理ともUTC、フロント表示のみJST
+- 配信時刻は **毎朝 07:00 JST (= 22:00 UTC) 固定**。ユーザーは頻度（何日ごと）のみ設定する
+- 頻度チェックは `sources.last_triggered_at` と `schedule_frequency` で行う（`schedule_time` カラムは廃止）
+- タイムゾーン: DB・バックエンドはすべてUTC。フロント表示のみJST変換
 
 ---
 

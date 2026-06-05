@@ -13,9 +13,9 @@ class Source(Base):
     type: Mapped[str] = mapped_column(Text, nullable=False, default="arxiv")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     schedule_frequency: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    schedule_time: Mapped[str] = mapped_column(
-        Text, nullable=False, default="00:00"
-    )  # UTC HH:MM
+    last_triggered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     email_to: Mapped[str] = mapped_column(Text, nullable=False)
     max_results: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
     period: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

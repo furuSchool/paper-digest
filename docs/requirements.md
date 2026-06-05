@@ -38,8 +38,8 @@
 | name | TEXT | 表示名 |
 | description | TEXT | ダイジェストタイトルに使用する説明文 |
 | enabled | BOOLEAN | 有効 / 無効 |
-| schedule_frequency | INTEGER | `1` なら毎日、`7` なら週1回 |
-| schedule_time | TEXT | 配信時刻（UTC で保存。例: `23:00`） |
+| schedule_frequency | INTEGER | `1` なら毎日、`7` なら週1回（日数で指定） |
+| last_triggered_at | DATETIME | 最後にダイジェストを配信した日時（UTC）。NULL なら未配信 |
 | email_to | TEXT | 配信先メールアドレス |
 | max_results | INTEGER | 最終的に配信する論文件数 |
 | period | INTEGER | 取得対象期間（日数。例: `7` なら過去7日） |
@@ -96,8 +96,7 @@
 | 説明文 | テキスト入力 | ダイジェストタイトルに使用 |
 | arXivカテゴリ | チェックボックス一覧 + カスタム入力 | プリセット9件 + 自由入力可（例: cs.LG） |
 | キーワード | テキスト入力（カンマ区切り） | arXiv APIの `ti:` / `abs:` フィールドで絞り込み |
-| 配信頻度 | セレクト（daily / weekly） |  |
-| 配信時刻 | 時刻ピッカー | JSTで入力 → UTC変換してAPI送信 |
+| 配信頻度 | セレクト（毎日 / 毎週） | 配信時刻は 07:00 JST 固定（変更不可） |
 | 取得件数上限 | 数値入力 | 最終配信件数 |
 | 取得期間（日） | 数値入力 | ランダムサンプリングの対象期間 |
 | 配信先メール | テキスト入力 |  |
@@ -130,7 +129,7 @@
 | DELETE | `/sources/:id` | ソース削除 |
 | POST | `/digest/run/:id` | ダイジェスト生成（Docs書き込み・メール送信あり） |
 | POST | `/digest/preview/:id` | ダイジェスト生成（表示用・送信なし）。`?use_mock=true` でモード切替可 |
-| POST | `/digest/trigger` | GitHub Actionsから呼ばれる。現在時刻と一致するソースを全実行 |
+| POST | `/digest/trigger` | GitHub Actionsから毎日 22:00 UTC に呼ばれる。`schedule_frequency` 日以上未配信のソースを全実行 |
 | GET | `/auth/google` | Google OAuth2認証開始 |
 | GET | `/auth/google/callback` | OAuth2コールバック・トークン保存 |
 | GET | `/auth/status` | 認証状態確認 |
@@ -205,10 +204,10 @@ Abstract: ...
 
 | 場所 | タイムゾーン |
 | --- | --- |
-| DBの保存値（schedule_time 等） | UTC |
+| DBの保存値（`last_triggered_at` 等） | UTC |
 | バックエンド処理・GitHub Actions | UTC |
-| フロントの表示・入力 | JST（UTC+9） |
-| フロント→API通信 | JSTで入力 → 送信前にUTC変換 |
+| フロントの表示 | JST（UTC+9）に変換して表示 |
+| 配信時刻 | 07:00 JST 固定（= 22:00 UTC）。ユーザー設定なし |
 
 ---
 
@@ -220,7 +219,7 @@ Abstract: ...
 name: Run Digest
 on:
   schedule:
-    - cron: '0 * * * *'   # 毎時00分にUTCで実行
+    - cron: '0 22 * * *'  # 毎日 22:00 UTC (= 翌 07:00 JST) に実行
   workflow_dispatch:       # 手動実行も可
 
 jobs:
@@ -247,10 +246,26 @@ jobs:
             --fail --silent --show-error
 ```
 
-- バックエンドの `/digest/trigger` は、現在時刻（UTC）と一致する `schedule_time` を持つ有効なソースを全て実行する
+### 配信時刻の設計方針
+
+- 配信時刻は **毎朝 07:00 JST (= 22:00 UTC)** に固定。ユーザーは変更不可
+- GitHub Actions の cron は `0 22 * * *`（1日1回）に設定し、不要な Render 起動を排除する
+- `/digest/trigger` は `schedule_frequency` 日以上未配信のソースのみを実行する（頻度チェック）
+  - 毎日（`schedule_frequency=1`）: 毎日配信
+  - 週1回（`schedule_frequency=7`）: 前回配信から7日以上経過した日のみ配信
+- 配信実績は `sources.last_triggered_at`（UTC）に記録される
 - `TRIGGER_API_KEY` による簡易認証でエンドポイントを保護する
-- Render 無料枠のスリープ対策として UptimeRobot（無料）で 5 分おきに `/health` を監視する（コールドスタート自体を防ぐ）
 - GitHub Actions の secrets に `BACKEND_URL`（例: `https://paper-digest.onrender.com`）を登録する
+
+### Neon PostgreSQL への移行時のスキーマ変更
+
+既存の Neon DB に対して以下の ALTER TABLE を手動で実行すること：
+
+```sql
+ALTER TABLE sources ADD COLUMN last_triggered_at TIMESTAMP WITH TIME ZONE;
+```
+
+（`schedule_time` カラムは廃止済み。DB に残っていても動作に影響はないが、不要なら `ALTER TABLE sources DROP COLUMN schedule_time;` で削除可）
 
 ---
 
