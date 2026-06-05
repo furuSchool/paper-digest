@@ -25,7 +25,7 @@ export interface Source {
   interests: SourceInterest[];
 }
 
-export type SourceCreate = Omit<Source, "id" | "created_at"> & {
+export type SourceCreate = Omit<Source, "id" | "created_at" | "last_triggered_at"> & {
   interests: Omit<SourceInterest, "id">[];
 };
 
