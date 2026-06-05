@@ -26,6 +26,7 @@ if DATABASE_URL.startswith("postgresql+asyncpg://"):
     parsed = urlparse(DATABASE_URL)
     params = parse_qs(parsed.query, keep_blank_values=True)
     ssl_mode = params.pop("sslmode", [None])[0]
+    params.pop("channel_binding", None)  # asyncpg は channel_binding パラメータを受け付けない
     new_query = urlencode({k: v[0] for k, v in params.items()})
     DATABASE_URL = urlunparse(parsed._replace(query=new_query))
     if ssl_mode in ("require", "verify-ca", "verify-full"):
