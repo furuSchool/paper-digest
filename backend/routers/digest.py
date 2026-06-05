@@ -304,12 +304,18 @@ async def trigger_digest(
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     now_utc = datetime.now(timezone.utc)
-    current_time = now_utc.strftime("%H:%M")
+
+    from datetime import timedelta
+
+    window_times = {
+        (now_utc + timedelta(minutes=delta)).strftime("%H:%M") for delta in range(-5, 6)
+    }
 
     result = await db.execute(
         select(Source).where(
-            Source.enabled == True, Source.schedule_time == current_time
-        )  # noqa: E712
+            Source.enabled == True,
+            Source.schedule_time.in_(window_times),  # noqa: E712
+        )
     )
     sources = result.scalars().all()
 

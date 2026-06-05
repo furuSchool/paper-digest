@@ -6,8 +6,10 @@ from datetime import datetime, timedelta, timezone
 import arxiv
 import httpx
 
-MAX_PAPERS_PER_QUERY = 300  # 1クエリあたりの上限
-ARXIV_TIMEOUT_SEC = 300  # この秒数を超えたら RuntimeError を送出
+MAX_PAPERS_PER_QUERY = 300
+ARXIV_TIMEOUT_SEC = 300
+
+_arxiv_client = arxiv.Client(page_size=100, delay_seconds=5, num_retries=3)
 
 
 @dataclass
@@ -23,21 +25,27 @@ class ArxivPaper:
 
 
 def _normalize_arxiv_id(arxiv_id: str) -> str:
-    """バージョンサフィックスを除去する: '2406.00001v2' → '2406.00001'"""
-    return re.sub(r'v\d+$', '', arxiv_id)
+    return re.sub(r"v\d+$", "", arxiv_id)
 
 
 def _build_query(
     categories: list[str], keywords: list[str], date_start: str, date_end: str
 ) -> str:
-    """arXiv 検索クエリを組み立てる。日付範囲・キーワードは ti: / abs: フィールドで OR 検索。"""
     category_query = " OR ".join(f"cat:{c}" for c in categories)
     date_filter = f"submittedDate:[{date_start}0000 TO {date_end}2359]"
 
     if keywords:
-        kw_clauses = [
-            f"(ti:{kw.strip()} OR abs:{kw.strip()})" for kw in keywords if kw.strip()
-        ]
+        kw_clauses = []
+        for kw in keywords:
+            cleaned = kw.strip()
+            if not cleaned:
+                continue
+            if " " in cleaned and not (
+                cleaned.startswith('"') and cleaned.endswith('"')
+            ):
+                cleaned = f'"{cleaned}"'
+            kw_clauses.append(f"(ti:{cleaned} OR abs:{cleaned})")
+
         keyword_query = " OR ".join(kw_clauses)
         return f"({category_query}) AND ({keyword_query}) AND {date_filter}"
 
@@ -87,10 +95,12 @@ async def fetch_papers(
         sort_by=arxiv.SortCriterion.SubmittedDate,
         sort_order=arxiv.SortOrder.Descending,
     )
-    client = arxiv.Client(page_size=100, delay_seconds=3, num_retries=0)
 
     def _fetch() -> list[ArxivPaper]:
-        return [_make_arxiv_paper(r, matched_by_keyword) for r in client.results(search)]
+        return [
+            _make_arxiv_paper(r, matched_by_keyword)
+            for r in _arxiv_client.results(search)
+        ]
 
     loop = asyncio.get_running_loop()
     try:
@@ -104,7 +114,9 @@ async def fetch_papers(
         )
     except arxiv.HTTPError as e:
         if e.status == 429:
-            return []
+            raise RuntimeError(
+                "arXiv API からレート制限（429 Too Many Requests）を受けました。しばらく時間を空けてください。"
+            ) from e
         raise RuntimeError(f"arXiv API エラー (HTTP {e.status}): {e}") from e
 
     return papers
@@ -123,7 +135,9 @@ def _parse_atom_entry(entry: ET.Element, matched_by_keyword: bool) -> ArxivPaper
     arxiv_id = _normalize_arxiv_id(raw_id.split("/abs/")[-1])
 
     title_el = entry.find("atom:title", ns)
-    title = (title_el.text or "").strip().replace("\n", " ") if title_el is not None else ""
+    title = (
+        (title_el.text or "").strip().replace("\n", " ") if title_el is not None else ""
+    )
 
     summary_el = entry.find("atom:summary", ns)
     abstract = (summary_el.text or "").strip() if summary_el is not None else ""
@@ -142,9 +156,7 @@ def _parse_atom_entry(entry: ET.Element, matched_by_keyword: bool) -> ArxivPaper
     ]
 
     categories = [
-        t.get("term", "")
-        for t in entry.findall("atom:category", ns)
-        if t.get("term")
+        t.get("term", "") for t in entry.findall("atom:category", ns) if t.get("term")
     ]
 
     url = f"https://arxiv.org/abs/{arxiv_id}"
