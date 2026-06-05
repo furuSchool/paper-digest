@@ -253,8 +253,9 @@ async def _run_digest(
             for ps in paper_summaries:
                 await db.execute(
                     text(
-                        "INSERT OR IGNORE INTO delivered_papers "
-                        "(source_id, arxiv_id, delivered_at) VALUES (:sid, :aid, :dt)"
+                        "INSERT INTO delivered_papers "
+                        "(source_id, arxiv_id, delivered_at) VALUES (:sid, :aid, :dt) "
+                        "ON CONFLICT DO NOTHING"
                     ),
                     {"sid": source_id, "aid": ps.arxiv_id, "dt": now},
                 )

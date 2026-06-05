@@ -14,15 +14,16 @@
 [GitHub Actions]（定期実行 / cron）
   └── バックエンドの /digest/trigger をHTTPで叩く
 
-[React Frontend]
-  ↕ REST API
-[FastAPI Backend]
+[React Frontend @ Vercel]
+  ↕ REST API（VITE_API_URL で向き先を切り替え）
+[FastAPI Backend @ Render]
   ├── arXiv API（論文取得）
+  ├── Semantic Scholar API（引用数フィルタリング）
   ├── Gemini API（要約生成のみ）
   ├── Google Docs API（ドキュメント作成・書き込み）
   └── Gmail API（メール送信）
 
-[SQLite]（設定データのみ保存）
+[Neon PostgreSQL]（設定データ・配信済み論文IDを保存）
 ```
 
 ---
@@ -226,14 +227,30 @@ jobs:
   trigger:
     runs-on: ubuntu-latest
     steps:
+      - name: Wake up backend
+        run: |
+          # Render 無料枠のコールドスタート対策: /health が 200 を返すまで最大 5 分ポーリング
+          for i in $(seq 1 20); do
+            STATUS=$(curl -o /dev/null -s -w "%{http_code}" "${{ secrets.BACKEND_URL }}/health")
+            if [ "$STATUS" = "200" ]; then
+              echo "Backend ready (attempt $i)"
+              break
+            fi
+            echo "Attempt $i/20: got $STATUS, sleeping 15s..."
+            sleep 15
+          done
       - name: Trigger digest
         run: |
-          curl -X POST ${{ secrets.BACKEND_URL }}/digest/trigger \
-            -H "X-API-Key: ${{ secrets.TRIGGER_API_KEY }}"
+          curl -X POST \
+            -H "X-API-Key: ${{ secrets.TRIGGER_API_KEY }}" \
+            "${{ secrets.BACKEND_URL }}/digest/trigger" \
+            --fail --silent --show-error
 ```
 
 - バックエンドの `/digest/trigger` は、現在時刻（UTC）と一致する `schedule_time` を持つ有効なソースを全て実行する
 - `TRIGGER_API_KEY` による簡易認証でエンドポイントを保護する
+- Render 無料枠のスリープ対策として UptimeRobot（無料）で 5 分おきに `/health` を監視する（コールドスタート自体を防ぐ）
+- GitHub Actions の secrets に `BACKEND_URL`（例: `https://paper-digest.onrender.com`）を登録する
 
 ---
 
@@ -256,16 +273,39 @@ jobs:
 | --- | --- |
 | フロントエンド | React + TypeScript + Vite |
 | バックエンド | Python 3.11+ + FastAPI |
-| DB | SQLite + SQLAlchemy |
+| DB | Neon (PostgreSQL) + SQLAlchemy + asyncpg（本番）/ SQLite + aiosqlite（ローカル開発） |
 | LLM | Gemini API（`gemini-3.1-flash-lite`）※要約のみ |
-| 外部API | arXiv API, Google Docs API, Gmail API, Google Drive API |
+| 外部API | arXiv API, Semantic Scholar API, Google Docs API, Gmail API, Google Drive API |
 | 認証 | Google OAuth2（Docs + Gmail + Drive 一本化） |
 | 定期実行 | GitHub Actions（cron） |
-| デプロイ | Render 無料枠 |
+| フロントホスティング | Vercel（無料枠） |
+| バックホスティング | Render Web Service（無料枠） |
+| コールドスタート対策 | UptimeRobot（5分ごとに /health を監視、無料枠） |
 
 ---
 
 ## 12. 環境変数（`.env`）
+
+### バックエンド（Render 環境変数）
+
+```
+GEMINI_API_KEY=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=https://<your-backend>.onrender.com/auth/google/callback
+TRIGGER_API_KEY=
+DATABASE_URL=postgresql://user:pass@ep-xxx.us-east-1.aws.neon.tech/neondb?sslmode=require
+FRONTEND_URL=https://<your-app>.vercel.app
+SEMANTIC_SCHOLAR_API_KEY=    # 任意。設定なしでも動作（レートリミットが低い）
+```
+
+### フロントエンド（Vercel 環境変数）
+
+```
+VITE_API_URL=https://<your-backend>.onrender.com
+```
+
+### ローカル開発（`.env`）
 
 ```
 GEMINI_API_KEY=
@@ -273,9 +313,12 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=http://localhost:8000/auth/google/callback
 TRIGGER_API_KEY=
-DATABASE_URL=sqlite:///./app.db
+DATABASE_URL=sqlite:///./app.db    # ローカルのみ SQLite 使用
 FRONTEND_URL=http://localhost:5173
+SEMANTIC_SCHOLAR_API_KEY=
 ```
+
+- フロントのローカル開発では `VITE_API_URL` を未設定にしておく → `/api` にフォールバックし Vite プロキシ経由でバックエンドと通信
 
 ---
 
@@ -321,6 +364,56 @@ FRONTEND_URL=http://localhost:5173
 
 ---
 
-## 14. 将来拡張（スコープ外）
+## 14. デプロイ構成と手順
+
+### 構成
+
+| コンポーネント | サービス | 備考 |
+| --- | --- | --- |
+| フロントエンド | Vercel（無料） | GitHub から自動デプロイ |
+| バックエンド | Render Web Service（無料） | `backend/` をルートとして設定 |
+| DB | Neon PostgreSQL（無料） | `DATABASE_URL` として Render に設定 |
+| コールドスタート対策 | UptimeRobot（無料） | 5分ごとに `/health` を HTTP 監視 |
+
+### DB の選定理由（SQLite → Neon）
+
+- Render 無料枠はファイルシステムが揮発性（デプロイ・再起動のたびにリセット）
+- SQLite のファイルはそのたびに消えるため永続化不可
+- Neon を選んだ理由：
+  - サーバーレス PostgreSQL、無料枠 0.5GB
+  - アイドル時は自動スケールダウン（課金なし）
+  - SQLAlchemy + asyncpg で最小限のコード変更で移行可能
+
+### CORS の対処方針
+
+- バックエンドは `FRONTEND_URL` 環境変数を CORS の許可オリジンに使用（実装済み）
+- Render の環境変数に `FRONTEND_URL=https://<your-app>.vercel.app` を設定する
+- フロントエンドの `client.ts` は `VITE_API_URL` 環境変数でバックエンドURLを切り替え：
+  - ローカル開発: `VITE_API_URL` 未設定 → `/api` → Vite プロキシ経由
+  - 本番（Vercel）: `VITE_API_URL=https://<your-backend>.onrender.com` を設定
+
+### バックエンドの変更点（SQLite → PostgreSQL 対応）
+
+- `database.py`: `postgresql://` → `postgresql+asyncpg://` URL 正規化を追加
+- `database.py`: `run_migrations()` は SQLite ローカル開発用として残す（PostgreSQL ではスキップ）
+- `routers/digest.py`: `INSERT OR IGNORE` → `INSERT INTO ... ON CONFLICT DO NOTHING`（PostgreSQL 構文）
+- `pyproject.toml`: `asyncpg` を依存関係に追加
+
+### セットアップ手順（初回）
+
+1. Neon でプロジェクト作成 → 接続文字列を取得（`DATABASE_URL`）
+2. Render Web Service 作成（`backend/` ディレクトリ、Python 環境）
+   - 環境変数を設定（`DATABASE_URL`、`GEMINI_API_KEY` 等）
+   - Build Command: `pip install -r requirements.txt`（または `uv sync`）
+   - Start Command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+3. Vercel でプロジェクト作成（`frontend/` ディレクトリ）
+   - 環境変数: `VITE_API_URL=https://<your-backend>.onrender.com`
+4. Google OAuth2 の Redirect URI を本番 URL に更新
+5. UptimeRobot でバックエンドの `/health` を 5 分間隔で監視設定
+6. GitHub Actions の secrets に `BACKEND_URL`・`TRIGGER_API_KEY` を設定
+
+---
+
+## 15. 将来拡張（スコープ外）
 
 - arXiv以外のURL（meta.ai 等）ソース対応

@@ -10,6 +10,19 @@ jobs:
   trigger:
     runs-on: ubuntu-latest
     steps:
+      - name: Wake up backend
+        run: |
+          echo "Waiting for backend to wake up..."
+          for i in $(seq 1 20); do
+            STATUS=$(curl -o /dev/null -s -w "%{http_code}" "${{ secrets.BACKEND_URL }}/health")
+            if [ "$STATUS" = "200" ]; then
+              echo "Backend is ready (attempt $i)"
+              break
+            fi
+            echo "Attempt $i/20: got HTTP $STATUS, sleeping 15s..."
+            sleep 15
+          done
+
       - name: Trigger digest endpoint
         run: |
           curl -X POST \

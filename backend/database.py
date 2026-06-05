@@ -10,6 +10,14 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./app.db")
 # sqlite:/// → sqlite+aiosqlite:///
 if DATABASE_URL.startswith("sqlite:///") and not DATABASE_URL.startswith("sqlite+aiosqlite:///"):
     DATABASE_URL = DATABASE_URL.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
+# postgresql:// → postgresql+asyncpg://
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+# postgres:// (Render/Heroku 互換) → postgresql+asyncpg://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+
+_IS_SQLITE = DATABASE_URL.startswith("sqlite")
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -25,7 +33,9 @@ async def get_db() -> AsyncSession:
 
 
 async def run_migrations() -> None:
-    """既存テーブルへの新カラム追加マイグレーション。カラムが既存の場合は無視する。"""
+    """SQLite ローカル開発用: 既存テーブルへの新カラム追加。カラムが既存の場合は無視する。"""
+    if not _IS_SQLITE:
+        return  # PostgreSQL では create_all() で全カラムが作成されるためスキップ
     migrations = [
         "ALTER TABLE sources ADD COLUMN dedup_enabled BOOLEAN NOT NULL DEFAULT 1",
         "ALTER TABLE sources ADD COLUMN citation_filter_enabled BOOLEAN NOT NULL DEFAULT 0",
