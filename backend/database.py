@@ -1,3 +1,4 @@
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -7,20 +8,35 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./app.db")
+_connect_args: dict = {}
+
 # sqlite:/// → sqlite+aiosqlite:///
-if DATABASE_URL.startswith("sqlite:///") and not DATABASE_URL.startswith("sqlite+aiosqlite:///"):
+if DATABASE_URL.startswith("sqlite:///") and not DATABASE_URL.startswith(
+    "sqlite+aiosqlite:///"
+):
     DATABASE_URL = DATABASE_URL.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
 # postgresql:// → postgresql+asyncpg://
-if DATABASE_URL.startswith("postgresql://"):
+elif DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-# postgres:// (Render/Heroku 互換) → postgresql+asyncpg://
-if DATABASE_URL.startswith("postgres://"):
+# postgres:// (Neon/Render/Heroku 互換) → postgresql+asyncpg://
+elif DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+
+if DATABASE_URL.startswith("postgresql+asyncpg://"):
+    parsed = urlparse(DATABASE_URL)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    ssl_mode = params.pop("sslmode", [None])[0]
+    new_query = urlencode({k: v[0] for k, v in params.items()})
+    DATABASE_URL = urlunparse(parsed._replace(query=new_query))
+    if ssl_mode in ("require", "verify-ca", "verify-full"):
+        _connect_args["ssl"] = True
 
 _IS_SQLITE = DATABASE_URL.startswith("sqlite")
 
-engine = create_async_engine(DATABASE_URL, echo=False)
-AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+engine = create_async_engine(DATABASE_URL, echo=False, connect_args=_connect_args)
+AsyncSessionLocal = async_sessionmaker(
+    engine, class_=AsyncSession, expire_on_commit=False
+)
 
 
 class Base(DeclarativeBase):
