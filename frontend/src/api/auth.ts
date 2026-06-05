@@ -1,4 +1,4 @@
-import { api } from "./client";
+import { api, BASE_URL } from "./client";
 
 export interface AuthStatus {
   authenticated: boolean;
@@ -8,7 +8,7 @@ export interface AuthStatus {
 export const authApi = {
   status: (): Promise<AuthStatus> => api.get("/auth/status"),
   startOAuth: () => {
-    window.location.href = "/api/auth/google";
+    window.location.href = `${BASE_URL}/auth/google`;
   },
   revoke: (): Promise<void> => api.delete("/auth/google"),
 };
