@@ -42,7 +42,11 @@ async def search_by_citation(
     if not keywords:
         return []
 
-    query = " ".join(kw.strip() for kw in keywords if kw.strip())
+    query = " OR ".join(
+        f'"{kw.strip()}"' if " " in kw.strip() else kw.strip()
+        for kw in keywords
+        if kw.strip()
+    )
     if not query:
         return []
 
@@ -90,5 +94,7 @@ async def search_by_citation(
             if not token:
                 break
 
-    logger.info("Semantic Scholar: %d件取得 (arXiv論文のみ、year=%s)", len(results), year)
+    logger.info(
+        "Semantic Scholar: %d件取得 (arXiv論文のみ、year=%s)", len(results), year
+    )
     return results[:limit]
