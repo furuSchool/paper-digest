@@ -42,11 +42,12 @@ async def search_by_citation(
     if not keywords:
         return []
 
-    query = " OR ".join(
+    terms = [
         f'"{kw.strip()}"' if " " in kw.strip() else kw.strip()
         for kw in keywords
         if kw.strip()
-    )
+    ]
+    query = "(" + " | ".join(terms) + ")" if len(terms) > 1 else (terms[0] if terms else "")
     if not query:
         return []
 
